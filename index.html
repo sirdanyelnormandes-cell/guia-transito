@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Guia de Trânsito</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      font-family: "Times New Roman", Times, serif;
+      padding: 20px;
+      background: #f9f9f9;
+    }
+    label {
+      display: block;
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    input, textarea {
+      width: 100%;
+      font-size: 14px;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+    }
+    textarea {
+      height: 100px;
+      white-space: pre-line;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<h2 style="text-align:center; font-size:20pt; margin-bottom:30px;">GUIA DE TRÂNSITO DE BENS PESSOAIS</h2>
+
+<form id="guiaForm">
+  <label for="transportador">Nome do Motorista:</label>
+  <input type="text" id="transportador" required />
+
+  <label for="cpfTransportador">CPF do Motorista:</label>
+  <input type="text" id="cpfTransportador" required pattern="\d{11}" title="Digite 11 dígitos numéricos" />
+
+  <label for="proprietario">Nome do Dono da mudança:</label>
+  <input type="text" id="proprietario" required />
+
+  <label for="cpfProprietario">CPF do Dono da mudança:</label>
+  <input type="text" id="cpfProprietario" required pattern="\d{11}" title="Digite 11 dígitos numéricos" />
+
+  <label for="cidadeOrigem">Cidade de Origem:</label>
+  <input type="text" id="cidadeOrigem" required placeholder="Ex: VILHENA" />
+
+  <label for="estadoOrigem">Estado de Origem (UF):</label>
+  <input type="text" id="estadoOrigem" required maxlength="2" placeholder="Ex: RO" style="text-transform:uppercase" />
+
+  <label for="cidadeDestino">Cidade de Destino:</label>
+  <input type="text" id="cidadeDestino" required placeholder="Ex: COMODORO" />
+
+  <label for="estadoDestino">Estado de Destino (UF):</label>
+  <input type="text" id="estadoDestino" required maxlength="2" placeholder="Ex: MT" style="text-transform:uppercase" />
+
+  <label for="placa">Placa do Veículo:</label>
+  <input type="text" id="placa" required pattern="[A-Za-z]{3}\d{4}" title="Formato ABC1234" />
+
+  <label for="listaBens">Lista de Bens Transportados (um item por linha):</label>
+  <textarea id="listaBens" required></textarea>
+
+  <label for="data">Data (dd/mm/aaaa):</label>
+  <input type="text" id="data" required pattern="\d{2}/\d{2}/\d{4}" title="Formato dd/mm/aaaa" />
+
+  <button type="button" onclick="gerarPDF()">Gerar PDF</button>
+</form>
+
+<script>
+  const { jsPDF } = window.jspdf;
+
+  function dataPorExtenso(dataStr) {
+    const meses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
+      "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+    const partes = dataStr.split("/");
+    if (partes.length !== 3) return dataStr;
+    const dia = parseInt(partes[0], 10);
+    const mes = parseInt(partes[1], 10) - 1;
+    const ano = parseInt(partes[2], 10);
+    if (isNaN(dia) || isNaN(mes) || isNaN(ano)) return dataStr;
+    return `${dia} de ${meses[mes]} de ${ano}`;
+  }
+
+  function formataCPF(cpf) {
+    if (cpf.length !== 11) return cpf;
+    return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  }
+
+  function escreveTextoComEstilos(doc, x, y, maxWidth, partes) {
+    const lineHeight = 16;
+    const spaceWidth = doc.getTextWidth(' ');
+    let cursorX = x;
+
+    for (let i = 0; i < partes.length; i++) {
+      const bloco = partes[i];
+      doc.setFont("times", bloco.bold ? "bold" : "normal");
+
+      const palavras = bloco.text.split(' ');
+      for (let p = 0; p < palavras.length; p++) {
+        const palavra = palavras[p];
+        const wordWidth = doc.getTextWidth(palavra);
+        if (cursorX + wordWidth > x + maxWidth) {
+          y += lineHeight;
+          cursorX = x;
+        }
+        doc.text(palavra, cursorX, y);
+        cursorX += wordWidth + spaceWidth;
+      }
+    }
+    return y + lineHeight;
+  }
+
+  function gerarPDF() {
+    const transportador = document.getElementById("transportador").value.trim().toUpperCase();
+    const cpfTransportadorRaw = document.getElementById("cpfTransportador").value.trim();
+    const cpfTransportador = formataCPF(cpfTransportadorRaw);
+    const proprietario = document.getElementById("proprietario").value.trim().toUpperCase();
+    const cpfProprietarioRaw = document.getElementById("cpfProprietario").value.trim();
+    const cpfProprietario = formataCPF(cpfProprietarioRaw);
+    const cidadeOrigem = document.getElementById("cidadeOrigem").value.trim().toUpperCase();
+    const estadoOrigem = document.getElementById("estadoOrigem").value.trim().toUpperCase();
+    const cidadeDestino = document.getElementById("cidadeDestino").value.trim().toUpperCase();
+    const estadoDestino = document.getElementById("estadoDestino").value.trim().toUpperCase();
+    const placa = document.getElementById("placa").value.trim().toUpperCase();
+    const listaBensRaw = document.getElementById("listaBens").value.trim();
+    const dataInput = document.getElementById("data").value.trim();
+
+    if (!transportador || !cpfTransportadorRaw || !proprietario || !cpfProprietarioRaw ||
+        !cidadeOrigem || !estadoOrigem || !cidadeDestino || !estadoDestino ||
+        !placa || !listaBensRaw || !dataInput) {
+      alert("Por favor, preencha todos os campos corretamente.");
+      return;
+    }
+
+    const dataExtenso = dataPorExtenso(dataInput);
+    const listaBens = listaBensRaw.split(/\r?\n/).filter(l => l.trim() !== "");
+
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginLeft = 50;
+    const marginRight = 40; // 
+    const maxWidth = pageWidth - marginLeft - marginRight;
+    let y = 80;
+
+    // Título centralizado em negrito
+    doc.setFont("times", "bold");
+    doc.setFontSize(18);
+    doc.text("GUIA DE TRÂNSITO", pageWidth / 2, y, { align: "center" });
+
+    y += 40;
+    doc.setFont("times", "normal");
+    doc.setFontSize(12);
+
+    // Inserir 25 espaços no início da frase para estética
+    const espacos = " ".repeat(25);
+
+    // Texto principal dividido em partes com negrito apenas nos dados do formulário
+    const partes = [
+      { text: espacos + "Eu,", bold: false },
+      { text: transportador, bold: true },
+      { text: ", portador do ", bold: false },
+      { text: "CPF/MF", bold: true },
+      { text: " ", bold: false },
+      { text: cpfTransportador, bold: true },
+      { text: "declaro para os devidos fins e efeitos legais que estou transportando uma mudança de propriedade de", bold: false },
+      { text: proprietario, bold: true },
+      { text: " portador do ", bold: false },
+      { text: "CPF/MF", bold: true },
+      { text: " ", bold: false },
+      { text: cpfProprietario, bold: true },
+      { text: "saindo da cidade de", bold: false },
+      { text: cidadeOrigem + "/" + estadoOrigem, bold: true },
+      { text: ", com destino à cidade de", bold: false },
+      { text: cidadeDestino + "/" + estadoDestino, bold: true },
+      { text: ", no veículo de placa", bold: false },
+      { text: placa, bold: true },
+      { text: ", contendo os bens abaixo relacionados:", bold: false },
+    ];
+
+    y = escreveTextoComEstilos(doc, marginLeft, y, maxWidth, partes);
+
+    y += 10;
+
+    // Lista de bens deslocada um pouco ao centro, mas alinhada à esquerda
+    const listMarginLeft = marginLeft + 20;
+    doc.setFont("times", "bold");
+    doc.text("LISTA DE BENS TRANSPORTADOS:", listMarginLeft, y);
+    y += 20;
+
+    doc.setFont("times", "normal");
+    listaBens.forEach(item => {
+      const linha = `• ${item.trim().toUpperCase()}`;
+      const linhas = doc.splitTextToSize(linha, maxWidth - 20);
+      doc.text(linhas, listMarginLeft, y);
+      y += linhas.length * 16;
+    });
+
+    y += 50; // espaço antes do texto final
+
+    // Linha 1: Texto "E para que surta os efeitos legais" centralizado
+    doc.text("E para que surta os efeitos legais", pageWidth / 2, y, { align: "center" });
+    y += 20;
+
+    // Linha 2: "Assino o presente." centralizada
+    doc.text("Assino o presente.", pageWidth / 2, y, { align: "center" });
+    y += 20;
+
+    // Linha 3: Cidade de Origem/UF e data por extenso centralizada e com duas linhas de espaço (32 pts)
+    doc.text(`${cidadeOrigem}/${estadoOrigem}, ${dataExtenso}`, pageWidth / 2, y, { align: "center" });
+    y += 32; // espaço maior para pular duas linhas
+
+    // Linha 4: Linha pontilhada centralizada em negrito
+    const pontilhado = ".".repeat(60);
+    doc.setFont("times", "bold");
+    doc.text(pontilhado, pageWidth / 2, y, { align: "center" });
+    y += 20;
+
+    // Linha 5: NOME DO TRANSPORTADOR centralizado em negrito
+    doc.text(transportador, pageWidth / 2, y, { align: "center" });
+    y += 20;
+
+    // Linha 6: CPF/MF CPF DO TRANSPORTADOR centralizado em negrito
+    doc.text(`CPF/MF ${cpfTransportador}`, pageWidth / 2, y, { align: "center" });
+
+    doc.save("Guia_De_Transito.pdf");
+  }
+</script>
+
+</body>
+</html>
