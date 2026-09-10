@@ -65,15 +65,15 @@
   <input type="text" id="estadoDestino" required maxlength="2" placeholder="Ex: MT" style="text-transform:uppercase" />
 
   <label for="placa">Placa do Veículo:</label>
-  <input type="text" id="placa" required pattern="[A-Za-z]{3}\d{4}" title="Formato ABC1234" />
+  <input type="text" id="placa" required pattern="[A-Za-z]{3}\d{4}|[A-Za-z]{3}\d[A-Za-z]\d{2}" title="Formato ABC1234 ou ABC1D23 (Mercosul)" />
 
   <label for="listaBens">Lista de Bens Transportados (um item por linha):</label>
   <textarea id="listaBens" required></textarea>
 
-  <label for="data">Data (dd/mm/aaaa):</label>
-  <input type="text" id="data" required pattern="\d{2}/\d{2}/\d{4}" title="Formato dd/mm/aaaa" />
+  <label for="data">Data (dd/mm/aaaa ou ddmmaaaa):</label>
+  <input type="text" id="data" required pattern="\d{2}/\d{2}/\d{4}|\d{8}" title="Digite no formato dd/mm/aaaa ou apenas os 8 dígitos, ex: 10092026" />
 
-  <button type="button" onclick="gerarPDF()">Gerar PDF</button>
+  <button type="submit">Gerar PDF</button>
 </form>
 
 <script>
@@ -82,12 +82,23 @@
   function dataPorExtenso(dataStr) {
     const meses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
       "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
-    const partes = dataStr.split("/");
-    if (partes.length !== 3) return dataStr;
-    const dia = parseInt(partes[0], 10);
-    const mes = parseInt(partes[1], 10) - 1;
-    const ano = parseInt(partes[2], 10);
-    if (isNaN(dia) || isNaN(mes) || isNaN(ano)) return dataStr;
+    let dia, mes, ano;
+
+    if (/^\d{8}$/.test(dataStr)) {
+      // Formato sem barras: ddmmaaaa
+      dia = parseInt(dataStr.substring(0, 2), 10);
+      mes = parseInt(dataStr.substring(2, 4), 10) - 1;
+      ano = parseInt(dataStr.substring(4, 8), 10);
+    } else {
+      // Formato com barras: dd/mm/aaaa
+      const partes = dataStr.split("/");
+      if (partes.length !== 3) return dataStr;
+      dia = parseInt(partes[0], 10);
+      mes = parseInt(partes[1], 10) - 1;
+      ano = parseInt(partes[2], 10);
+    }
+
+    if (isNaN(dia) || isNaN(mes) || isNaN(ano) || mes < 0 || mes > 11) return dataStr;
     return `${dia} de ${meses[mes]} de ${ano}`;
   }
 
@@ -96,31 +107,80 @@
     return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
   }
 
-  function escreveTextoComEstilos(doc, x, y, maxWidth, partes) {
-    const lineHeight = 13;
+  // Quebra o texto (com trechos em negrito/normal) em linhas, calculando a
+  // largura de cada palavra com a fonte correta antes de decidir a quebra.
+  function montaLinhas(doc, maxWidth, partes) {
+    const linhas = [];
+    let linhaAtual = [];
+    let larguraAtual = 0;
     const spaceWidth = doc.getTextWidth(' ');
-    let cursorX = x;
 
     for (let i = 0; i < partes.length; i++) {
       const bloco = partes[i];
       doc.setFont("times", bloco.bold ? "bold" : "normal");
+      const palavras = bloco.text.split(' ').filter(p => p !== '');
 
-      const palavras = bloco.text.split(' ');
       for (let p = 0; p < palavras.length; p++) {
         const palavra = palavras[p];
         const wordWidth = doc.getTextWidth(palavra);
-        if (cursorX + wordWidth > x + maxWidth) {
-          y += lineHeight;
-          cursorX = x;
+        const espacoNecessario = linhaAtual.length > 0 ? spaceWidth : 0;
+
+        if (larguraAtual + espacoNecessario + wordWidth > maxWidth && linhaAtual.length > 0) {
+          linhas.push(linhaAtual);
+          linhaAtual = [];
+          larguraAtual = 0;
         }
-        doc.text(palavra, cursorX, y);
-        cursorX += wordWidth + spaceWidth;
+        linhaAtual.push({ text: palavra, bold: bloco.bold, width: wordWidth });
+        larguraAtual += (linhaAtual.length > 1 ? spaceWidth : 0) + wordWidth;
       }
     }
-    return y + lineHeight;
+    if (linhaAtual.length > 0) linhas.push(linhaAtual);
+    return linhas;
   }
 
-  function gerarPDF() {
+  // Desenha as linhas já quebradas, justificando (como o Word) todas as
+  // linhas exceto a última do parágrafo, que fica alinhada à esquerda.
+  function escreveTextoComEstilos(doc, x, y, maxWidth, partes, pageHeight, marginBottom) {
+    const lineHeight = 16;
+    const spaceWidth = doc.getTextWidth(' ');
+    const linhas = montaLinhas(doc, maxWidth, partes);
+
+    linhas.forEach((linha, idx) => {
+      if (y > pageHeight - marginBottom) {
+        doc.addPage();
+        y = 60;
+      }
+
+      const isUltimaLinha = idx === linhas.length - 1;
+      const larguraPalavras = linha.reduce((soma, w) => soma + w.width, 0);
+      const numEspacos = linha.length - 1;
+
+      let gap = spaceWidth;
+      if (!isUltimaLinha && numEspacos > 0) {
+        const espacoDisponivel = maxWidth - larguraPalavras;
+        gap = espacoDisponivel / numEspacos;
+      }
+
+      let cursorX = x;
+      linha.forEach((w, i) => {
+        doc.setFont("times", w.bold ? "bold" : "normal");
+        doc.text(w.text, cursorX, y);
+        cursorX += w.width + (i < linha.length - 1 ? gap : 0);
+      });
+
+      y += lineHeight;
+    });
+
+    return y;
+  }
+
+  function gerarPDF(event) {
+    event.preventDefault();
+    const form = document.getElementById("guiaForm");
+    if (!form.reportValidity()) {
+      return;
+    }
+
     const transportador = document.getElementById("transportador").value.trim().toUpperCase();
     const cpfTransportadorRaw = document.getElementById("cpfTransportador").value.trim();
     const cpfTransportador = formataCPF(cpfTransportadorRaw);
@@ -135,21 +195,16 @@
     const listaBensRaw = document.getElementById("listaBens").value.trim();
     const dataInput = document.getElementById("data").value.trim();
 
-    if (!transportador || !cpfTransportadorRaw || !proprietario || !cpfProprietarioRaw ||
-        !cidadeOrigem || !estadoOrigem || !cidadeDestino || !estadoDestino ||
-        !placa || !listaBensRaw || !dataInput) {
-      alert("Por favor, preencha todos os campos corretamente.");
-      return;
-    }
-
     const dataExtenso = dataPorExtenso(dataInput);
     const listaBens = listaBensRaw.split(/\r?\n/).filter(l => l.trim() !== "");
 
     const doc = new jsPDF({ unit: "pt", format: "a4" });
 
     const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
     const marginLeft = 50;
-    const marginRight = 40; // 
+    const marginRight = 40;
+    const marginBottom = 60;
     const maxWidth = pageWidth - marginLeft - marginRight;
     let y = 80;
 
@@ -188,9 +243,14 @@
       { text: ", contendo os bens abaixo relacionados:", bold: false },
     ];
 
-    y = escreveTextoComEstilos(doc, marginLeft, y, maxWidth, partes);
+    y = escreveTextoComEstilos(doc, marginLeft, y, maxWidth, partes, pageHeight, marginBottom);
 
     y += 10;
+
+    if (y > pageHeight - marginBottom) {
+      doc.addPage();
+      y = 60;
+    }
 
     // Lista de bens deslocada um pouco ao centro, mas alinhada à esquerda
     const listMarginLeft = marginLeft + 20;
@@ -202,11 +262,21 @@
     listaBens.forEach(item => {
       const linha = `• ${item.trim().toUpperCase()}`;
       const linhas = doc.splitTextToSize(linha, maxWidth - 20);
+      const alturaBloco = linhas.length * 16;
+      if (y + alturaBloco > pageHeight - marginBottom) {
+        doc.addPage();
+        y = 60;
+      }
       doc.text(linhas, listMarginLeft, y);
-      y += linhas.length * 16;
+      y += alturaBloco;
     });
 
     y += 50; // espaço antes do texto final
+
+    if (y > pageHeight - marginBottom - 140) {
+      doc.addPage();
+      y = 80;
+    }
 
     // Linha 1: Texto "E para que surta os efeitos legais" centralizado
     doc.text("E para que surta os efeitos legais", pageWidth / 2, y, { align: "center" });
@@ -233,8 +303,16 @@
     // Linha 6: CPF/MF CPF DO TRANSPORTADOR centralizado em negrito
     doc.text(`CPF/MF ${cpfTransportador}`, pageWidth / 2, y, { align: "center" });
 
-    doc.save("Guia_De_Transito.pdf");
+    // Nome do arquivo: GUIA + nome do motorista, sem acentos/caracteres inválidos
+    const nomeArquivo = "GUIA " + transportador
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+      .replace(/[\\/:*?"<>|]/g, "") // remove caracteres inválidos em nomes de arquivo
+      .trim();
+
+    doc.save(`${nomeArquivo}.pdf`);
   }
+
+  document.getElementById("guiaForm").addEventListener("submit", gerarPDF);
 </script>
 
 </body>
